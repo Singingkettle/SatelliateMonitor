@@ -11,16 +11,16 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
     %     7. 汇总并导出测试报告       （调 Reporter，写入 results/session2/<runTag>/）
     %
     %   每步在 UI 上显式标注「输入 / 输出 / 规模」。
-
+    
     properties (Hidden)
         MainGrid
         StepsLayout
-
+        
         StepButtons
         StepLabels
         StepStatus              % 0=pending, 1=active, 2=completed
         CurrentStep = 0
-
+        
         % --- 配置控件 ---
         NumSatEdit              % 每星座卫星数（默认 30）
         NumSNREdit              % SNR 点数（默认 10）
@@ -80,7 +80,7 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
         % 真实下沉, 避免任意 SNR 都 100% 准确率. 0 表示禁用.
         ChallengeExtraNoise_dB (1,1) double = 6
     end
-
+    
     properties (Constant, Hidden)
         StepNames = { ...
             '创建仿真场景' ...
@@ -109,7 +109,7 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
         PendingColor = [0.50 0.50 0.50]
         ActiveColor = [1.00 0.80 0.20]
     end
-
+    
     events
         StepCompleted
         AllStepsCompleted
@@ -117,7 +117,7 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
         TestCompleted           % 整个测试矩阵完成
         TestExportReady         % 报告导出完成
     end
-
+    
     methods
         function this = Session2TestFlowPanel(varargin)
             this@matlabshared.application.Component(varargin{:});
@@ -126,30 +126,30 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
             this.StepLabels = cell(numel(this.StepNames), 1);
             this.StepStatus = zeros(numel(this.StepNames), 1);
         end
-
+        
         function name = getName(~)
             name = '测试流程';
         end
-
+        
         function tag = getTag(~)
             tag = 'session2testflow';
         end
-
+        
         function update(this)
             createUI(this);
         end
-
+        
         function createUI(this)
             clf(this.Figure);
             this.Figure.Color = this.BgColor;
-
+            
             this.MainGrid = uigridlayout(this.Figure, [5, 1]);
             this.MainGrid.RowHeight = {32, 'fit', '1x', 24, 36};
             this.MainGrid.ColumnWidth = {'1x'};
             this.MainGrid.Padding = [8 8 8 8];
             this.MainGrid.RowSpacing = 6;
             this.MainGrid.BackgroundColor = this.BgColor;
-
+            
             % ---- 标题 ----
             titlePanel = uipanel(this.MainGrid, ...
                 'BackgroundColor', [0.15 0.15 0.18], 'BorderType', 'none');
@@ -161,7 +161,7 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                 'FontSize', 13, 'FontWeight', 'bold', ...
                 'FontColor', this.AccentColor, ...
                 'BackgroundColor', [0.15 0.15 0.18]);
-
+            
             % ---- 参数区 (步骤 3 偏移 / 步骤 4 矩阵 / 步骤 5 检测器) ----
             this.buildConfigArea(this.MainGrid);
 
@@ -174,7 +174,7 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
             this.StepsLayout.Padding = [0 0 0 0];
             this.StepsLayout.RowSpacing = 4;
             this.StepsLayout.BackgroundColor = this.BgColor;
-
+            
             for i = 1:n
                 this.createStepButton(this.StepsLayout, i);
             end
@@ -196,7 +196,7 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                 'FontColor', this.AccentColor, ...
                 'HorizontalAlignment', 'right', ...
                 'BackgroundColor', [0.12 0.12 0.14]);
-
+            
             % ---- 控制按钮 ----
             controlPanel = uipanel(this.MainGrid, ...
                 'BackgroundColor', [0.12 0.12 0.14], 'BorderType', 'none');
@@ -222,10 +222,10 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                 'Text', '↺ 重置', 'FontSize', 11, ...
                 'BackgroundColor', [0.5 0.3 0.3], 'FontColor', [1 1 1], ...
                 'ButtonPushedFcn', @(~,~) this.resetSteps());
-
+            
             this.enableStep(1);
         end
-
+        
         function buildConfigArea(this, parent)
             % 顶部参数区: 把步骤 3/4/5 的可编辑参数集中, 让步骤按钮保持整齐
             cfgPanel = uipanel(parent, ...
@@ -344,7 +344,7 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
             this.setStepActive(idx);
             this.updateStatus(sprintf('正在执行: %s', this.StepNames{idx}));
             drawnow;
-
+            
             try
                 switch idx
                     case 1, this.step1_CreateScenario();
@@ -369,12 +369,12 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                 rethrow(ME);
             end
         end
-
+        
         function runAllSteps(this)
             for i = 1:numel(this.StepNames)
                 if this.StepStatus(i) ~= 2
                     try
-                        this.executeStep(i);
+                    this.executeStep(i);
                     catch
                         return;
                     end
@@ -382,14 +382,14 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                 end
             end
         end
-
+        
         function runNextStep(this)
             nextStep = this.CurrentStep + 1;
             if nextStep <= numel(this.StepNames)
                 this.executeStep(nextStep);
             end
         end
-
+        
         function stopTest(this)
             this.IsRunning = false;
             if ~isempty(this.AnimationTimer) && isvalid(this.AnimationTimer)
@@ -420,7 +420,7 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
 
             this.ProcessIdx = 0;
             this.CurrentStep = 0;
-
+            
             for i = 1:numel(this.StepNames)
                 this.setStepPending(i);
             end
@@ -445,10 +445,10 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
         function step1_CreateScenario(this)
             startTime = datetime('now', 'TimeZone', 'UTC');
             stopTime = startTime + seconds(this.ScenarioDuration_sec);
-
+            
             this.Scenario = satelliteScenario(startTime, stopTime, ...
                 this.ScenarioSampleTime_sec, 'AutoSimulate', false);
-
+            
             if isprop(this.Application, 'ViewerPanel') && ~isempty(this.Application.ViewerPanel)
                 this.Application.ViewerPanel.createViewer(this.Scenario);
             end
@@ -725,9 +725,9 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                     'Name', sprintf('%s-Comp-%02d', constellation, i), ...
                     'CoordinateFrame', 'ecef');
                 this.(compField){i} = comp;
+                end
             end
-        end
-
+            
         function path = autoFindDetector(this)
             path = '';
             projectRoot = this.projectRoot();
@@ -955,8 +955,8 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                     metrics.summary.(con).accuracy_pct = NaN;
                     metrics.summary.(con).misclassified_pct = NaN;
                     metrics.summary.(con).missed_pct = NaN;
+                    end
                 end
-            end
             grandTotal = sum(cm(:));
             if grandTotal > 0
                 metrics.summary.overall.total = grandTotal;
@@ -1055,7 +1055,7 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
             end
             if ~isempty(opt.Seed), rng(opt.Seed, 'twister'); end
             extraNoise_dB = max(0, opt.ExtraNoise_dB);
-
+            
             spectrumConfig = spectrumMonitorConfig(constellation);
             phyParams = constellationPhyConfig(constellation);
             switch lower(constellation)
@@ -1070,18 +1070,18 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
             if ~terminalProfile.initialized
                 error('twin:Session2:TerminalInitFailed', '%s ch=%d', constellation, channelIndex);
             end
-
+            
             [txWaveform, txInfo, ~] = dataGen.link.transmit(terminalProfile, constellation, bwMode);
             txInfo.constellation = constellation;
             if ~isfield(txInfo, 'txPower') || isempty(txInfo.txPower)
                 txInfo.txPower = terminalProfile.txTemplate.txPower;
             end
-
+            
             % --- 信道传播（关闭噪声 + 注入指定 doppler） ---
             timeInstant = posixtime(simTime);
             options = struct('enableWidebandSampling', true);
             receiverCfg = dataGen.config.receiver(options, spectrumConfig);
-
+            
             linkParams = struct();
             linkParams.constellation = txInfo.constellation;
             linkParams.utPosition = terminalProfile.utPos;
@@ -1264,9 +1264,9 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                     end
                 otherwise
                     if ~isempty(scores), agg.topScore = max(scores); end
+                end
             end
-        end
-
+            
         function paths = exportReport(plan, metrics, varargin)
             % EXPORTREPORT 一次性写出 manifest/csv/mat/png 到 results/session2/<runTag>/
             opt = struct('OutputRoot', '', 'RunTag', '', ...
@@ -1313,10 +1313,10 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
             profile = struct('initialized', false);
             if ~isfield(phyParams.channelization.modes, bwMode), return; end
             modeParams = phyParams.channelization.modes.(bwMode);
-
+            
             utPosLLA = terminalPos(:)';
             try
-                [elevation, ~, ~] = calculateLinkGeometry(utPosLLA, commSatPos);
+            [elevation, ~, ~] = calculateLinkGeometry(utPosLLA, commSatPos);
             catch
                 elevation = NaN;
             end
@@ -1339,7 +1339,7 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
             else
                 mcsIdx = 1; modulation = 'QPSK'; codeRate = 0.5;
             end
-
+            
             txTemplate = dataGen.signal.txParams(constellation, modeParams);
             txTemplate.modulation = modulation;
             txTemplate.codeRate = codeRate;
@@ -1359,14 +1359,14 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
             else
                 txTemplate.numInfoBits = 20000;
             end
-
+            
             rfMeta = struct( ...
                 'phaseNoise', 0, 'frequencyOffset', 0, 'dcOffset', 0, ...
                 'iqImbalance', struct('amplitudeImbalance', 0, 'phaseImbalance', 0), ...
                 'paModel', [], ...
                 'id', sprintf('%s_s2_%d', constellation, randi(1e6)), ...
                 'type', 'session2');
-
+            
             profile.initialized = true;
             profile.utPos = utPosLLA;
             profile.modeKey = bwMode;

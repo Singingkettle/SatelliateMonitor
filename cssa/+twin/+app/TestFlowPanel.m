@@ -119,192 +119,154 @@
             % 创建测试流程界面
             clf(this.Figure);
             this.Figure.Color = this.BgColor;
-            
-            % 主布局: 标题 + 步骤列表 + 状态栏 + 控制按钮
-            this.MainGrid = uigridlayout(this.Figure, [4, 1]);
-            this.MainGrid.RowHeight = {40, '1x', 30, 45};
+
+            % 主布局 (与会话 2 一致): 标题 / 参数区 / 步骤区 / 状态条 / 控制区
+            this.MainGrid = uigridlayout(this.Figure, [5, 1]);
+            this.MainGrid.RowHeight = {32, 'fit', '1x', 24, 36};
             this.MainGrid.ColumnWidth = {'1x'};
-            this.MainGrid.Padding = [10 10 10 10];
-            this.MainGrid.RowSpacing = 8;
+            this.MainGrid.Padding = [8 8 8 8];
+            this.MainGrid.RowSpacing = 6;
             this.MainGrid.BackgroundColor = this.BgColor;
-            
-            % 标题栏
+
+            % ---- 标题 ----
             titlePanel = uipanel(this.MainGrid, ...
-                'BackgroundColor', [0.15 0.15 0.18], ...
-                'BorderType', 'none');
-            titleLayout = uigridlayout(titlePanel, [1, 1]);
-            titleLayout.ColumnWidth = {'1x'};
-            titleLayout.Padding = [10 5 10 5];
-            titleLayout.BackgroundColor = [0.15 0.15 0.18];
-            
-            uilabel(titleLayout, ...
-                'Text', '多种信号体制识别测试流程', ...
-                'FontSize', 14, ...
-                'FontWeight', 'bold', ...
+                'BackgroundColor', [0.15 0.15 0.18], 'BorderType', 'none');
+            tl = uigridlayout(titlePanel, [1, 1]);
+            tl.Padding = [10 2 10 2];
+            tl.BackgroundColor = [0.15 0.15 0.18];
+            uilabel(tl, ...
+                'Text', '多种信号体制识别 — 测试流程 (会话 1)', ...
+                'FontSize', 13, 'FontWeight', 'bold', ...
                 'FontColor', this.AccentColor, ...
                 'BackgroundColor', [0.15 0.15 0.18]);
-            
-            % 步骤列表（可滚动）
+
+            % ---- 参数区 (步骤 2 共享伴飞偏移) ----
+            this.buildConfigArea(this.MainGrid);
+
+            % ---- 步骤按钮区 (整行可点击, 无单独触发列) ----
             stepsPanel = uipanel(this.MainGrid, ...
-                'BackgroundColor', this.BgColor, ...
-                'BorderType', 'none', 'Scrollable', 'on');
-            
+                'BackgroundColor', this.BgColor, 'BorderType', 'none');
             n = numel(this.StepNames);
             stepsLayout = uigridlayout(stepsPanel, [n, 1]);
-            stepsLayout.RowHeight = repmat({'fit'}, 1, n);
-            stepsLayout.ColumnWidth = {'1x'};
-            stepsLayout.Padding = [5 5 5 5];
-            stepsLayout.RowSpacing = 6;
+            stepsLayout.RowHeight = repmat({'1x'}, 1, n);
+            stepsLayout.Padding = [0 0 0 0];
+            stepsLayout.RowSpacing = 4;
             stepsLayout.BackgroundColor = this.BgColor;
-            stepsLayout.Scrollable = 'on';
-            
-            % 创建每个步骤
+
             for i = 1:n
-                this.createStepRow(stepsLayout, i);
+                this.createStepButton(stepsLayout, i);
             end
-            
-            % 状态栏
+
+            % ---- 状态条 ----
             statusPanel = uipanel(this.MainGrid, ...
-                'BackgroundColor', [0.12 0.12 0.14], ...
-                'BorderType', 'none');
-            statusLayout = uigridlayout(statusPanel, [1, 1]);
-            statusLayout.ColumnWidth = {'1x'};
-            statusLayout.Padding = [10 2 10 2];
-            statusLayout.BackgroundColor = [0.12 0.12 0.14];
-            
-            this.StatusLabel = uilabel(statusLayout, ...
-                'Text', '等待开始...', ...
-                'FontSize', 11, ...
-                'FontColor', this.TextColor, ...
+                'BackgroundColor', [0.12 0.12 0.14], 'BorderType', 'none');
+            sl = uigridlayout(statusPanel, [1, 1]);
+            sl.Padding = [10 1 10 1];
+            sl.BackgroundColor = [0.12 0.12 0.14];
+            this.StatusLabel = uilabel(sl, ...
+                'Text', '准备就绪 — 点击下方任意步骤即可执行', ...
+                'FontSize', 11, 'FontColor', this.TextColor, ...
                 'BackgroundColor', [0.12 0.12 0.14]);
-            
-            % 控制按钮栏
+
+            % ---- 控制按钮 (与会话 2 同 4 键: ▶ 自动 / ⏭ 单步 / ⏹ 停止 / ↺ 重置) ----
             controlPanel = uipanel(this.MainGrid, ...
-                'BackgroundColor', [0.12 0.12 0.14], ...
-                'BorderType', 'none');
-            controlLayout = uigridlayout(controlPanel, [1, 3]);
-            controlLayout.ColumnWidth = {'1x', '1x', '1x'};
-            controlLayout.Padding = [10 5 10 5];
-            controlLayout.ColumnSpacing = 10;
-            controlLayout.BackgroundColor = [0.12 0.12 0.14];
-            
-            % 一键连续运行
-            uibutton(controlLayout, ...
-                'Text', '▶ 一键运行', ...
-                'FontSize', 11, ...
-                'BackgroundColor', this.AccentColor, ...
-                'FontColor', [1 1 1], ...
+                'BackgroundColor', [0.12 0.12 0.14], 'BorderType', 'none');
+            cl = uigridlayout(controlPanel, [1, 4]);
+            cl.ColumnWidth = {'1x', '1x', '1x', '1x'};
+            cl.Padding = [8 2 8 2];
+            cl.ColumnSpacing = 8;
+            cl.BackgroundColor = [0.12 0.12 0.14];
+
+            uibutton(cl, ...
+                'Text', '▶ 自动执行', 'FontSize', 11, ...
+                'BackgroundColor', this.AccentColor, 'FontColor', [1 1 1], ...
                 'ButtonPushedFcn', @(~,~) this.runAllSteps());
-            
-            % 单步前进
-            uibutton(controlLayout, ...
-                'Text', '⏭ 单步', ...
-                'FontSize', 11, ...
-                'BackgroundColor', [0.4 0.7 0.3], ...
-                'FontColor', [1 1 1], ...
+            uibutton(cl, ...
+                'Text', '⏭ 单步', 'FontSize', 11, ...
+                'BackgroundColor', [0.4 0.7 0.3], 'FontColor', [1 1 1], ...
                 'ButtonPushedFcn', @(~,~) this.runNextStep());
-            
-            % 重置按钮
-            uibutton(controlLayout, ...
-                'Text', '↺ 重置', ...
-                'FontSize', 11, ...
-                'BackgroundColor', [0.5 0.3 0.3], ...
-                'FontColor', [1 1 1], ...
+            uibutton(cl, ...
+                'Text', '⏹ 停止', 'FontSize', 11, ...
+                'BackgroundColor', [0.7 0.5 0.2], 'FontColor', [1 1 1], ...
+                'ButtonPushedFcn', @(~,~) this.stopTest());
+            uibutton(cl, ...
+                'Text', '↺ 重置', 'FontSize', 11, ...
+                'BackgroundColor', [0.5 0.3 0.3], 'FontColor', [1 1 1], ...
                 'ButtonPushedFcn', @(~,~) this.resetSteps());
+
+            this.enableStep(1);
         end
-        
-        function createStepRow(this, parent, stepIdx)
-            % 创建单个步骤行（带「输入/输出」副标 + 可选参数）
-            rowPanel = uipanel(parent, ...
-                'BackgroundColor', [0.14 0.14 0.16], ...
-                'BorderType', 'none');
-            
-            grid = uigridlayout(rowPanel, [1, 3]);
-            grid.ColumnWidth = {32, '1x', 100};
+
+        function buildConfigArea(this, parent)
+            % 顶部参数区: 步骤 2 共享伴飞偏移 (Starlink/OneWeb 同值)
+            cfgPanel = uipanel(parent, ...
+                'Title', '参数 (步骤 2 伴飞偏移, Starlink/OneWeb 共享)', ...
+                'BackgroundColor', this.BgColor, ...
+                'ForegroundColor', [0.55 0.55 0.55], ...
+                'FontSize', 10, ...
+                'BorderType', 'line', ...
+                'BorderColor', [0.30 0.30 0.34]);
+            grid = uigridlayout(cfgPanel, [1, 3]);
+            grid.ColumnWidth = {'fit', 110, 60};
+            grid.ColumnSpacing = 6;
             grid.Padding = [8 4 8 4];
-            grid.ColumnSpacing = 10;
-            grid.BackgroundColor = [0.14 0.14 0.16];
-            
-            % 步骤编号
-            numLabel = uilabel(grid, ...
-                'Text', sprintf('%d', stepIdx), ...
-                'FontSize', 14, 'FontWeight', 'bold', ...
-                'FontColor', this.PendingColor, ...
-                'HorizontalAlignment', 'center', ...
-                'BackgroundColor', [0.14 0.14 0.16]);
-            
-            % 中部 = 步骤名 + 输入/输出说明 + 步骤2 的偏移滑块
-            mid = uigridlayout(grid, [2, 1]);
-            mid.RowHeight = {'fit', 'fit'};
-            mid.RowSpacing = 2;
-            mid.Padding = [0 0 0 0];
-            mid.BackgroundColor = [0.14 0.14 0.16];
-            
-            nameLabel = uilabel(mid, ...
-                'Text', this.StepNames{stepIdx}, ...
-                'FontSize', 12, 'FontWeight', 'bold', ...
-                'FontColor', this.TextColor, ...
-                'BackgroundColor', [0.14 0.14 0.16]);
-            
-            ioRow = uigridlayout(mid, [1, 2]);
-            ioRow.ColumnWidth = {'1x', 'fit'};
-            ioRow.Padding = [0 0 0 0];
-            ioRow.BackgroundColor = [0.14 0.14 0.16];
-            
-            uilabel(ioRow, ...
-                'Text', this.StepIO{stepIdx}, ...
-                'FontSize', 10, 'FontColor', [0.65 0.65 0.65], ...
-                'BackgroundColor', [0.14 0.14 0.16]);
-            
-            % 步骤 2: 共享偏移滑块
-            paramHost = uigridlayout(ioRow, [1, 1]);
-            paramHost.Padding = [0 0 0 0];
-            paramHost.BackgroundColor = [0.14 0.14 0.16];
-            if stepIdx == 2
-                paramHost.ColumnWidth = {110, 100, 60};
-                uilabel(paramHost, 'Text', '伴飞偏移:', 'FontSize', 10, ...
-                    'FontColor', [0.7 0.7 0.7], ...
-                    'HorizontalAlignment', 'right', ...
-                    'BackgroundColor', [0.14 0.14 0.16]);
-                slider = uislider(paramHost, ...
-                    'Limits', [0 30], 'Value', this.StarlinkOffset, ...
-                    'MajorTicks', [], 'MinorTicks', []);
-                lbl = uilabel(paramHost, ...
-                    'Text', sprintf('%d km', this.StarlinkOffset), ...
-                    'FontSize', 10, 'FontColor', this.AccentColor, ...
-                    'BackgroundColor', [0.14 0.14 0.16]);
-                slider.ValueChangedFcn = @(src,~) this.onSharedOffsetChanged(src, lbl);
-                this.StarlinkOffsetSlider = slider;
-                this.StarlinkOffsetLabel = lbl;
-                this.OnewebOffsetSlider = slider;       % 共享同一个滑块
-                this.OnewebOffsetLabel = lbl;
-            end
-            
-            % 步骤触发（无「执行」字样，节省宽度）
-            btn = uibutton(grid, ...
-                'Text', '▶', ...
+            grid.BackgroundColor = this.BgColor;
+
+            uilabel(grid, 'Text', '伴飞偏移:', 'FontSize', 10, ...
+                'FontColor', [0.7 0.7 0.7], ...
+                'BackgroundColor', this.BgColor);
+            slider = uislider(grid, ...
+                'Limits', [0 30], 'Value', this.StarlinkOffset, ...
+                'MajorTicks', [], 'MinorTicks', [], ...
+                'ValueChangedFcn', @(src,~) this.onSharedOffsetChanged(src.Value));
+            lbl = uilabel(grid, ...
+                'Text', sprintf('%d km', this.StarlinkOffset), ...
+                'FontSize', 10, 'FontColor', this.AccentColor, ...
+                'BackgroundColor', this.BgColor);
+            this.StarlinkOffsetSlider = slider;
+            this.StarlinkOffsetLabel = lbl;
+            this.OnewebOffsetSlider = slider;
+            this.OnewebOffsetLabel = lbl;
+        end
+
+        function createStepButton(this, parent, idx)
+            % 整行 button (与会话 2 同款): 行 1 = 编号 + 步骤名, 行 2 = 输入/输出说明
+            btn = uibutton(parent, ...
+                'Text', this.formatStepText(idx, 'pending'), ...
                 'FontSize', 11, ...
-                'BackgroundColor', [0.25 0.25 0.28], ...
+                'HorizontalAlignment', 'left', ...
+                'BackgroundColor', [0.18 0.18 0.20], ...
                 'FontColor', this.TextColor, ...
                 'Enable', 'off', ...
-                'ButtonPushedFcn', @(~,~) this.executeStep(stepIdx));
-            
-            this.StepButtons{stepIdx} = btn;
-            this.StepLabels{stepIdx} = struct('num', numLabel, 'name', nameLabel, 'panel', rowPanel);
-            
-            % 第一步默认可执行
-            if stepIdx == 1
-                this.StepButtons{stepIdx}.Enable = 'on';
-                this.StepButtons{stepIdx}.BackgroundColor = this.AccentColor;
-                this.StepButtons{stepIdx}.FontColor = [1 1 1];
-            end
+                'ButtonPushedFcn', @(~,~) this.executeStep(idx));
+            this.StepButtons{idx} = btn;
+            this.StepLabels{idx} = struct('btn', btn);
         end
-        
-        function onSharedOffsetChanged(this, src, label)
-            value = round(src.Value);
+
+        function txt = formatStepText(this, idx, state)
+            % state: 'pending' | 'active' | 'completed' | 'enabled'
+            switch state
+                case 'completed', prefix = '✓';
+                case 'active',    prefix = '▶';
+                otherwise,        prefix = sprintf('%d', idx);
+            end
+            line1 = sprintf('  %s   %s', prefix, this.StepNames{idx});
+            line2 = sprintf('       %s', this.StepIO{idx});
+            txt = {line1; line2};
+        end
+
+        function onSharedOffsetChanged(this, value)
+            value = round(value);
             this.StarlinkOffset = value;
             this.OnewebOffset = value;
-            label.Text = sprintf('%d km', value);
+            if ~isempty(this.StarlinkOffsetLabel)
+                this.StarlinkOffsetLabel.Text = sprintf('%d km', value);
+            end
+        end
+
+        function stopTest(this)
+            % 会话 1 不存在批量 timer; 仅把状态条恢复为「停止」, 不打断当前 step
+            this.updateStatus('已请求停止 (单步执行不可中断, 仅清空状态条)');
         end
         
         function executeStep(this, stepIdx)
@@ -599,57 +561,38 @@
         %% ==================== UI 辅助方法 ====================
         
         function setStepPending(this, stepIdx)
-            % 设置步骤为待执行状态
             this.StepStatus(stepIdx) = 0;
-            labels = this.StepLabels{stepIdx};
-            labels.num.FontColor = this.PendingColor;
-            labels.name.FontColor = this.TextColor;
-            labels.panel.BackgroundColor = [0.14 0.14 0.16];
-            
             btn = this.StepButtons{stepIdx};
             btn.Enable = 'off';
-            btn.BackgroundColor = [0.25 0.25 0.28];
+            btn.BackgroundColor = [0.18 0.18 0.20];
             btn.FontColor = this.TextColor;
-            btn.Text = '▶';
+            btn.Text = this.formatStepText(stepIdx, 'pending');
         end
-        
+
         function setStepActive(this, stepIdx)
-            % 设置步骤为运行中状态
             this.StepStatus(stepIdx) = 1;
             this.CurrentStep = stepIdx;
-            labels = this.StepLabels{stepIdx};
-            labels.num.FontColor = this.ActiveColor;
-            labels.name.FontColor = this.ActiveColor;
-            labels.panel.BackgroundColor = [0.18 0.18 0.12];
-            
             btn = this.StepButtons{stepIdx};
-            btn.Text = '…';
+            btn.Text = this.formatStepText(stepIdx, 'active');
             btn.BackgroundColor = this.ActiveColor;
             btn.FontColor = [0 0 0];
         end
-        
+
         function setStepCompleted(this, stepIdx)
-            % 设置步骤为已完成状态
             this.StepStatus(stepIdx) = 2;
-            labels = this.StepLabels{stepIdx};
-            labels.num.FontColor = this.SuccessColor;
-            labels.name.FontColor = this.SuccessColor;
-            labels.panel.BackgroundColor = [0.12 0.18 0.14];
-            
             btn = this.StepButtons{stepIdx};
-            btn.Text = '✓ 完成';
+            btn.Text = this.formatStepText(stepIdx, 'completed');
             btn.BackgroundColor = this.SuccessColor;
             btn.FontColor = [1 1 1];
             btn.Enable = 'off';
         end
-        
+
         function enableStep(this, stepIdx)
-            % 启用指定步骤
             btn = this.StepButtons{stepIdx};
             btn.Enable = 'on';
             btn.BackgroundColor = this.AccentColor;
             btn.FontColor = [1 1 1];
-            btn.Text = '▶';
+            btn.Text = this.formatStepText(stepIdx, 'enabled');
         end
         
         function updateStatus(this, msg)
