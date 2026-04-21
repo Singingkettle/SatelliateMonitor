@@ -1,0 +1,71 @@
+{
+  "runTag": "production_6000",
+  "generatedAt": "2026-04-21 00:59:07",
+  "plan": {
+    "constellations": [
+      "starlink",
+      "oneweb"
+    ],
+    "numSatellitesPerConstellation": 30,
+    "snrGrid_dB": [
+      -10,
+      -7.7777777777777786,
+      -5.5555555555555554,
+      -3.3333333333333335,
+      -1.1111111111111112,
+      1.1111111111111112,
+      3.3333333333333335,
+      5.5555555555555554,
+      7.7777777777777786,
+      10
+    ],
+    "dopplerGrid_Hz": {
+      "starlink": [
+        -360000,
+        -280000,
+        -200000,
+        -120000,
+        -40000,
+        40000,
+        120000,
+        200000,
+        280000,
+        360000
+      ],
+      "oneweb": [
+        -345000,
+        -268333.33333333337,
+        -191666.66666666669,
+        -115000,
+        -38333.333333333336,
+        38333.333333333336,
+        115000,
+        191666.66666666669,
+        268333.33333333337,
+        345000
+      ]
+    },
+    "bandwidthMode": {
+      "starlink": "mode_60MHz",
+      "oneweb": "mode_20MHz"
+    },
+    "numChannels": {
+      "starlink": 8,
+      "oneweb": 10
+    },
+    "totalCells": 6000,
+    "cellsPerConstellation": 3000,
+    "seed": 2.026042E+7
+  },
+  "receiver": {
+    "bandwidth_Hz": 6.0E+8,
+    "sampleRate_Hz": 6.0E+8,
+    "centerFrequency_Hz": 1.425E+10,
+    "IQSampleLength": 1.8E+6,
+    "duration_sec": 0.003,
+    "companionSeparation_m": 14000,
+    "systemNoiseTemp_K": 300
+  },
+  "detectorPath": "C:\\Users\\lenovo\\Desktop\\SatelliateMonitor\\results\\unified\\detection\\yoloxs_ep30_bs32\\detector.mat",
+  "notes": {}
+}

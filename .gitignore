@@ -1,0 +1,60 @@
+# =============================================================
+#  SatelliateMonitor — Git ignore rules
+# =============================================================
+
+# -------- 大体积 / 可重新生成的资源 (不推送) --------
+# 1. TLE 原始数据 (10000+ 个 .tle 文件, 可从 Celestrak 重新拉取)
+data/*
+!data/README.md
+
+# 2. 训练得到的检测模型权重 (.mat 内嵌网络, 数十 ~ 百 MB)
+results/unified/*
+!results/unified/detection/
+results/unified/detection/*
+!results/unified/detection/README.md
+
+# 3. session2 验收的所有「试跑」目录, 仅保留 production_6000 作为 demo
+results/session2/*
+!results/session2/production_6000/
+!results/session2/.gitkeep
+
+# 4. session1 / session3 暂未输出报告; 即使后续输出也忽略
+results/session1/
+results/session3/
+
+# 任何 .tle / 训练副产物 / 巨型 .mat (兜底)
+*.tle
+results/**/training_info.mat
+*.iqdat
+*.iqd
+
+# -------- 本地环境 / 编辑器 / 临时文件 --------
+*.asv
+*.m~
+*.autosave
+*.bak
+*.tmp
+*.log
+*.DS_Store
+Thumbs.db
+desktop.ini
+
+# MATLAB 自动产物
+slprj/
+codegen/
+*.slxc
+*.mex*
+*.p
+octave-workspace
+.matlabAutoSave/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.code-workspace
+
+# 临时脚本 (聊天里偶尔会落下的探针)
+_tmp_*.m
+_dep_crawl.py
+__pycache__/
+*.pyc
