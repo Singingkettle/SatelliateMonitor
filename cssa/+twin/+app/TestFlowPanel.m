@@ -74,7 +74,7 @@
         
         % 检测模型
         DetectionModel
-        DetectionThreshold = 0.35  % 默认检测置信度阈值
+        DetectionThreshold = 0.30  % 与会话 2 (Session2TestFlowPanel.processOne) 同口径
         StarlinkDetectionResult    % 存储 Starlink 推理结果
         OnewebDetectionResult      % 存储 OneWeb 推理结果
         
@@ -512,14 +512,41 @@
                 'Name', name, 'MinElevationAngle', 10);
         end
         
-        function [iq, img] = generateAndDisplay(this, constellation, bwMode, termObj, satObj, compObj)
+        function [iq, img] = generateAndDisplay(this, constellation, bwMode, termObj, satObj, compObj) %#ok<INUSD>
+            % 直接调用与会话 2 同款的 generateSample, 保证 STFT 分布与
+            % YOLOX detector 训练数据完全一致 (否则 OneWeb 这种窄带信号
+            % 在背景噪声未被 LPF 整形时识别率会明显下降)。
             simTime = this.Scenario.StartTime + seconds(30);
             [companionPos, companionVel] = states(compObj, simTime, 'CoordinateFrame', 'ecef');
             [commSatPos, ~] = states(satObj, simTime, 'CoordinateFrame', 'ecef');
             terminalPos = [termObj.Latitude, termObj.Longitude, 0];
+
+            % 会话 1 是 demo, 用「容易识别」的工作点: 高 SNR + 零多普勒 + 不叠挑战噪声
+            snr_dB     = 12;
+            doppler_Hz = 0;
+
+            % 信道号: 从该星座该带宽模式合法范围里随机抽 1
+            phyParams = constellationPhyConfig(constellation);
+            if isfield(phyParams.channelization.modes, 'mode_60MHz') && strcmpi(constellation, 'starlink')
+                numCh = phyParams.channelization.modes.mode_60MHz.numChannels;
+            elseif isfield(phyParams.channelization.modes, 'mode_20MHz') && strcmpi(constellation, 'oneweb')
+                numCh = phyParams.channelization.modes.mode_20MHz.numChannels;
+            else
+                numCh = 1;
+            end
+            channelIdx = randi(max(1, numCh));
+
             try
-                [iq, img] = this.generateWidebandSignal(constellation, bwMode, terminalPos, ...
-                    companionPos(:), companionVel(:), commSatPos(:), simTime);
+                sample = twin.app.Session2TestFlowPanel.generateSample( ...
+                    constellation, terminalPos, ...
+                    commSatPos(:), companionPos(:), companionVel(:), ...
+                    simTime, channelIdx, snr_dB, doppler_Hz, ...
+                    'ExtraNoise_dB', 0);
+                iq = sample.iqData;
+                img = sample.stftImage;
+                fprintf('[Session1] %s ch=%d SNR_set=%.1fdB SNR_meas=%.1fdB doppler=%+.0fkHz\n', ...
+                    upper(constellation), channelIdx, snr_dB, ...
+                    sample.meta.snr_meas_burst_dB, doppler_Hz / 1e3);
             catch ME
                 warning('TestFlowPanel:SignalGenFailed', '%s', ME.message);
                 iq = [];
