@@ -533,6 +533,9 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
         end
 
         function step6_RunBatch(this)
+            % 同步执行: 启动 timer 处理 6000 cells, 然后阻塞等待全部完成
+            % 才返回, 这样 executeStep 才会在「真正全部跑完」时调
+            % setStepCompleted, runAllSteps 也才能正确串到 step7.
             if isempty(this.Plan) || ~isfield(this.Plan, 'Cells') || isempty(this.Plan.Cells)
                 error('请先完成步骤 4');
             end
@@ -540,9 +543,17 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                 error('请先加载检测模型');
             end
 
+            n = numel(this.Plan.Cells);
             this.ProcessIdx = 0;
             this.IsRunning = true;
-            this.updateProgress(0, numel(this.Plan.Cells));
+            this.updateProgress(0, n);
+
+            % 清理可能残留的 timer
+            if ~isempty(this.AnimationTimer) && isvalid(this.AnimationTimer)
+                try, stop(this.AnimationTimer); catch, end
+                try, delete(this.AnimationTimer); catch, end
+                this.AnimationTimer = [];
+            end
 
             this.AnimationTimer = timer( ...
                 'ExecutionMode', 'fixedSpacing', ...
@@ -550,9 +561,34 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                 'TimerFcn', @(~,~) this.onBatchTick(), ...
                 'StopFcn',  @(~,~) this.onBatchDone());
             start(this.AnimationTimer);
+
+            % --- 阻塞等待 timer 跑完整 6000 cells ---
+            % 使用 pause + drawnow 让 timer 回调和 GUI 事件继续处理.
+            % 用户点了「⏹ 停止」会把 IsRunning 设为 false, 这里也会跳出.
+            while this.IsRunning
+                pause(0.05);
+                drawnow;
+            end
+
+            % timer 完成后再保险地停一次, 避免 StopFcn 里再有 callback 排队
+            if ~isempty(this.AnimationTimer) && isvalid(this.AnimationTimer)
+                try, stop(this.AnimationTimer); catch, end
+            end
+
+            % 如果是被「停止」按钮提前打断, 这里直接抛错让 executeStep 标错误状态
+            if this.ProcessIdx < n
+                error('twin:Session2:BatchAborted', ...
+                    '批量测试被用户停止 (已处理 %d / %d, 评估记录 %d 条)', ...
+                    this.ProcessIdx, n, this.EvalNumRecorded);
+            end
         end
 
         function step7_ExportReport(this)
+            if this.IsRunning
+                error('twin:Session2:BatchStillRunning', ...
+                    '步骤 6 批量测试仍在运行 (%d / %d), 请等待完成或先点「⏹ 停止」', ...
+                    this.ProcessIdx, numel(this.Plan.Cells));
+            end
             if this.EvalNumRecorded == 0
                 error('请先完成步骤 6 (无评估记录)');
             end
