@@ -40,21 +40,34 @@ function [positionTT, velocityTT] = companion(scenario, refSatellite, separation
     % 从场景获取时间范围
     startTime = scenario.StartTime;
     stopTime = scenario.StopTime;
+    duration = seconds(stopTime - startTime);
 
     % 生成采样时刻序列
-    timeStep = seconds(sampleTimeSeconds);
+    % 采样点数上限 = MaxSamples (默认 16). 即便调用方给了 sampleTimeSeconds=1
+    % 而场景 60s, 也只用 16 个点 (步长会自动调大). satelliteScenario 内部
+    % 对 timetable 会做插值, 16 点已远够覆盖 LEO 60s 内的轨道平滑度
+    % (LEO 60s 走 ~450 km, 任意 4s 内位移 30 km 是接近线性的).
+    maxSamples = 16;
+    desiredStep = sampleTimeSeconds;
+    if duration > 0
+        minStep = duration / max(1, maxSamples - 1);
+        if desiredStep < minStep
+            desiredStep = minStep;
+        end
+    end
+    timeStep = seconds(desiredStep);
     times = startTime:timeStep:stopTime;
-    
+    if isempty(times)
+        times = startTime;
+    end
     if times(end) < stopTime
         times(end + 1) = stopTime;
     end
-    
     N = numel(times);
 
-    % 提取参考卫星的状态
+    % 提取参考卫星的状态 (states 仅支持标量 time, 只能 for 循环)
     posRef = zeros(N, 3);
     velRef = zeros(N, 3);
-    
     for i = 1:N
         [pos_i, vel_i] = states(refSatellite, times(i), 'CoordinateFrame', 'ECEF');
         posRef(i, :) = pos_i(:)';
@@ -75,14 +88,12 @@ function [positionTT, velocityTT] = companion(scenario, refSatellite, separation
     % 提取伴飞卫星的位置和速度
     posComp = zeros(N, 3);
     velComp = zeros(N, 3);
-
     for i = 1:N
         try
             [pos_i, vel_i] = states(refSatellite, companionTimes(i), 'CoordinateFrame', 'ECEF');
             posComp(i, :) = pos_i(:)';
             velComp(i, :) = vel_i(:)';
         catch
-            % 超出时间范围时使用参考卫星状态
             posComp(i, :) = posRef(i, :);
             velComp(i, :) = velRef(i, :);
         end

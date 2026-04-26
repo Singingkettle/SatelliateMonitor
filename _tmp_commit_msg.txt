@@ -1,0 +1,35 @@
+perf(session2): step3 4.4x / step6 batch detect + GPU 加速
+
+复现:
+  6000 cells 的 NumSat=30x30 测试中, step3 部署终端+伴飞要 7+ 分钟,
+  step6 逐张 detect 要 ~110 分钟. 用户期望 GPU/batch 加速.
+
+瓶颈定位 (16-cell smoke):
+  step1=9.9s step2=3.5s step3=30s step5=4.2s step6=18s step7=7.9s
+
+修复:
+- twin.orbit.companion 采样点 60 -> 16
+  states(sat, time) 仅支持标量, 无法向量化, 但 satelliteScenario 对
+  timetable 做内部插值, 16 点 (4s 步长) 远够 LEO 60s 内的轨道平滑度.
+  step3 从 30s -> 6.9s (4.4x).
+
+- twin.signal.terminal 仰角批量化
+  200 次 calculateLinkGeometry 单点调用 -> 一次矢量代数 (大地法向 dot LOS).
+  numCandidates 默认 500/200 -> 80 (高斯密集分布在星下点附近, 命中率高).
+  早 break 阈值 45 -> 60 度 (星下点本身就 90 度, 第一时间点直接收敛).
+  精度验证: 与原 calculateLinkGeometry 单点版误差 < 1e-13 度.
+
+- Session2TestFlowPanel.step6 batch detect
+  废弃 timer 路径 (onBatchTick/onBatchDone), 改同步 for batch.
+  攒 BatchSize (默认 16) 张 STFT 拼成 H x W x 3 x B 4-D 一次 detect.
+  ExecutionEnvironment 自动: 有 GPU 用 gpu, 否则 cpu.
+  旧 processOne 拆为 generateSampleForCell, batch 路径调用.
+  bad sample 兜底 + batch detect 失败回退逐张 + ETA 节流统计.
+  CPU 模式下 16 cells: 18s -> 13.7s (-23%); GPU 上预计 6000 cells
+  从 ~110 min 降到 ~25 min.
+
+- deployForConstellation 显式传 numCandidates=80 (与新默认对齐).
+
+验证 (CPU, 无 GPU):
+  16 cells (NumSat=2 NumSNR=2 NumDop=2) runAllSteps elapsed 46s,
+  StepStatus=[2 2 2 2 2 2 2], EvalNumRecorded=16, 控制台无错误.

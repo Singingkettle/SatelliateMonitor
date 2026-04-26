@@ -79,6 +79,12 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
         % SNR 比设定低这么多 dB. 显示的 X 轴 SNR 范围保持不变, 让曲线随 SNR
         % 真实下沉, 避免任意 SNR 都 100% 准确率. 0 表示禁用.
         ChallengeExtraNoise_dB (1,1) double = 6
+
+        % --- 批检测加速 ---
+        % step6 攒满 BatchSize 张 STFT 后一次性 detect, 在 GPU 上速度提升明显.
+        % 0 或 1 = 退化为逐张 detect.
+        DetectBatchSize (1,1) double = 16
+        DetectExecEnv (1,:) char = 'auto'   % 'auto' | 'cpu' | 'gpu'
     end
     
     properties (Constant, Hidden)
@@ -533,9 +539,9 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
         end
 
         function step6_RunBatch(this)
-            % 同步执行: 启动 timer 处理 6000 cells, 然后阻塞等待全部完成
-            % 才返回, 这样 executeStep 才会在「真正全部跑完」时调
-            % setStepCompleted, runAllSteps 也才能正确串到 step7.
+            % 同步 batch 循环: 攒 BatchSize 张 STFT 一次 detect (优先 GPU).
+            % 与原 timer 逐张 detect 相比, 在 GPU 上每张 detect 耗时从几十
+            % ms 降到几 ms (摊薄到每张, batch=16~32 时基本是 GPU 拷贝主导).
             if isempty(this.Plan) || ~isfield(this.Plan, 'Cells') || isempty(this.Plan.Cells)
                 error('请先完成步骤 4');
             end
@@ -543,44 +549,174 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                 error('请先加载检测模型');
             end
 
-            n = numel(this.Plan.Cells);
+            cells = this.Plan.Cells;
+            n = numel(cells);
             this.ProcessIdx = 0;
             this.IsRunning = true;
             this.updateProgress(0, n);
 
-            % 清理可能残留的 timer
-            if ~isempty(this.AnimationTimer) && isvalid(this.AnimationTimer)
-                try, stop(this.AnimationTimer); catch, end
-                try, delete(this.AnimationTimer); catch, end
-                this.AnimationTimer = [];
+            execEnv = this.resolveExecEnv();
+            B = max(1, round(this.DetectBatchSize));
+            fprintf('[Session2] step6: BatchSize=%d, ExecEnv=%s, total=%d cells\n', B, execEnv, n);
+
+            t0 = tic;
+            i = 0;
+            while i < n
+                if ~this.IsRunning, break; end
+
+                % --- 1) 当前 batch 内逐条 generateSample ---
+                jEnd = min(i + B, n);
+                bsz = jEnd - i;
+                samples = cell(bsz, 1);
+                imgsBatch = zeros(640, 640, 3, bsz, 'uint8');
+                cellsBatch = cells(i+1:jEnd);
+                badMask = false(bsz, 1);
+
+                for k = 1:bsz
+                    try
+                        samples{k} = this.generateSampleForCell(cellsBatch(k));
+                        img = samples{k}.stftImage;
+                        if size(img, 3) == 1, img = repmat(img, 1, 1, 3); end
+                        if ~isa(img, 'uint8')
+                            if max(img(:)) <= 1, img = uint8(img * 255); else, img = uint8(img); end
+                        end
+                        imgsBatch(:, :, :, k) = img;
+                    catch ME
+                        fprintf('[Session2] sample #%d 生成失败: %s\n', i+k, ME.message);
+                        badMask(k) = true;
+                    end
+                end
+
+                if any(badMask)
+                    % 给坏样本塞个全黑兜底, batch 完整性优先
+                    imgsBatch(:, :, :, badMask) = 0;
+                end
+
+                % --- 2) 一次性 batch detect ---
+                detResultsCell = cell(bsz, 1);
+                try
+                    if bsz == 1
+                        [bb, sc, lb] = detect(this.DetectionModel, imgsBatch(:,:,:,1), ...
+                            'Threshold', 0.30, 'ExecutionEnvironment', execEnv);
+                        detResultsCell{1} = struct('bboxes', bb, 'scores', sc, 'labels', lb);
+                    else
+                        [bbC, scC, lbC] = detect(this.DetectionModel, imgsBatch, ...
+                            'Threshold', 0.30, 'ExecutionEnvironment', execEnv);
+                        for k = 1:bsz
+                            detResultsCell{k} = struct( ...
+                                'bboxes', bbC{k}, 'scores', scC{k}, 'labels', lbC{k});
+                        end
+                    end
+                catch ME
+                    fprintf('[Session2] batch detect 失败 (%s), 退化为逐张\n', ME.message);
+                    for k = 1:bsz
+                        try
+                            [bb, sc, lb] = detect(this.DetectionModel, imgsBatch(:,:,:,k), ...
+                                'Threshold', 0.30);
+                            detResultsCell{k} = struct('bboxes', bb, 'scores', sc, 'labels', lb);
+                        catch
+                            detResultsCell{k} = struct('bboxes', zeros(0,4), 'scores', [], 'labels', {{}});
+                        end
+                    end
+                end
+
+                % --- 3) 回填 evaluator + notify TestCellReady (按顺序) ---
+                for k = 1:bsz
+                    if badMask(k), continue; end
+                    cellInfo = cellsBatch(k);
+                    detection = detResultsCell{k};
+                    if isempty(detection)
+                        detection = struct('bboxes', zeros(0,4), 'scores', [], 'labels', {{}});
+                    end
+                    sample = samples{k};
+                    try
+                        this.evalIngest(cellInfo, sample, detection);
+                        this.ProcessIdx = i + k;
+                        snapshot = this.evalSnapshot();
+                        notify(this, 'TestCellReady', ...
+                            twin.app.TestFrameEventData(struct( ...
+                                'CellInfo', cellInfo, ...
+                                'Sample', sample, ...
+                                'Detection', detection, ...
+                                'Snapshot', snapshot, ...
+                                'Processed', this.ProcessIdx, ...
+                                'TotalCells', n)));
+                    catch ME
+                        fprintf('[Session2] cell #%d 入库失败: %s\n', i+k, ME.message);
+                    end
+                end
+
+                this.updateProgress(this.ProcessIdx, n);
+                drawnow limitrate;
+
+                % 节流统计 (每 batch 打印一次)
+                if mod(jEnd, B*8) == 0 || jEnd == n
+                    elapsed = toc(t0);
+                    rate = this.ProcessIdx / max(elapsed, eps);
+                    eta = (n - this.ProcessIdx) / max(rate, eps);
+                    fprintf('[Session2] %d/%d cells, %.1f cells/s, ETA %.0fs\n', ...
+                        this.ProcessIdx, n, rate, eta);
+                end
+
+                i = jEnd;
             end
 
-            this.AnimationTimer = timer( ...
-                'ExecutionMode', 'fixedSpacing', ...
-                'Period', 0.05, ...
-                'TimerFcn', @(~,~) this.onBatchTick(), ...
-                'StopFcn',  @(~,~) this.onBatchDone());
-            start(this.AnimationTimer);
+            this.IsRunning = false;
+            this.updateStatus('批量测试完成，可执行步骤 7 导出报告');
+            notify(this, 'TestCompleted');
 
-            % --- 阻塞等待 timer 跑完整 6000 cells ---
-            % 使用 pause + drawnow 让 timer 回调和 GUI 事件继续处理.
-            % 用户点了「⏹ 停止」会把 IsRunning 设为 false, 这里也会跳出.
-            while this.IsRunning
-                pause(0.05);
-                drawnow;
-            end
-
-            % timer 完成后再保险地停一次, 避免 StopFcn 里再有 callback 排队
-            if ~isempty(this.AnimationTimer) && isvalid(this.AnimationTimer)
-                try, stop(this.AnimationTimer); catch, end
-            end
-
-            % 如果是被「停止」按钮提前打断, 这里直接抛错让 executeStep 标错误状态
+            % 用户中途点了「⏹ 停止」-> 抛错让 executeStep 标错误
             if this.ProcessIdx < n
                 error('twin:Session2:BatchAborted', ...
                     '批量测试被用户停止 (已处理 %d / %d, 评估记录 %d 条)', ...
                     this.ProcessIdx, n, this.EvalNumRecorded);
             end
+        end
+
+        function execEnv = resolveExecEnv(this)
+            % 'auto' -> 有 GPU 用 'gpu', 否则 'cpu'
+            execEnv = 'cpu';
+            switch lower(this.DetectExecEnv)
+                case 'gpu', execEnv = 'gpu';
+                case 'cpu', execEnv = 'cpu';
+                otherwise   % auto
+                    try
+                        if exist('gpuDeviceCount', 'file') && gpuDeviceCount('available') > 0
+                            execEnv = 'gpu';
+                        end
+                    catch
+                        execEnv = 'cpu';
+                    end
+            end
+        end
+
+        function sample = generateSampleForCell(this, cellInfo)
+            % 拆出来给 batch 路径用 (原 processOne 里前半段)
+            con = cellInfo.constellation;
+            switch lower(con)
+                case 'starlink'
+                    satObj = this.StarlinkSats{cellInfo.satIdx};
+                    utObj = this.StarlinkUTs{cellInfo.satIdx};
+                    compObj = this.StarlinkCompanions{cellInfo.satIdx};
+                case 'oneweb'
+                    satObj = this.OnewebSats{cellInfo.satIdx};
+                    utObj = this.OnewebUTs{cellInfo.satIdx};
+                    compObj = this.OnewebCompanions{cellInfo.satIdx};
+                otherwise
+                    error('未知星座 %s', con);
+            end
+            duration_sec = seconds(this.Scenario.StopTime - this.Scenario.StartTime);
+            offsetSec = rand() * max(0.0, duration_sec);
+            simTime = this.Scenario.StartTime + seconds(offsetSec);
+            [commSatPos, ~] = states(satObj, simTime, 'CoordinateFrame', 'ecef');
+            [companionPos, companionVel] = states(compObj, simTime, 'CoordinateFrame', 'ecef');
+
+            terminalPos = [utObj.Latitude, utObj.Longitude, 0];
+            sample = twin.app.Session2TestFlowPanel.generateSample( ...
+                con, terminalPos, commSatPos(:), companionPos(:), companionVel(:), ...
+                simTime, cellInfo.channelIndex, cellInfo.snr_dB, cellInfo.doppler_Hz, ...
+                'Seed', cellInfo.sampleSeed, ...
+                'ExtraNoise_dB', this.ChallengeExtraNoise_dB);
         end
 
         function step7_ExportReport(this)
@@ -609,94 +745,6 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                 end
             end
             notify(this, 'TestExportReady');
-        end
-
-        % ============================================================
-        %   批量循环
-        % ============================================================
-        function onBatchTick(this)
-            if ~this.IsRunning
-                stop(this.AnimationTimer);
-                return;
-            end
-            cells = this.Plan.Cells;
-            n = numel(cells);
-            if this.ProcessIdx >= n
-                this.IsRunning = false;
-                stop(this.AnimationTimer);
-                return;
-            end
-
-            this.ProcessIdx = this.ProcessIdx + 1;
-            cellInfo = cells(this.ProcessIdx);
-            try
-                [sample, detection] = this.processOne(cellInfo);
-                this.evalIngest(cellInfo, sample, detection);
-
-                snapshot = this.evalSnapshot();
-                this.updateProgress(this.ProcessIdx, n);
-
-                notify(this, 'TestCellReady', ...
-                    twin.app.TestFrameEventData(struct( ...
-                        'CellInfo', cellInfo, ...
-                        'Sample', sample, ...
-                        'Detection', detection, ...
-                        'Snapshot', snapshot, ...
-                        'Processed', this.ProcessIdx, ...
-                        'TotalCells', n)));
-            catch ME
-                fprintf('[Session2] 第 %d 条样本出错: %s\n', this.ProcessIdx, ME.message);
-            end
-            drawnow limitrate;
-        end
-
-        function onBatchDone(this)
-            this.IsRunning = false;
-            this.updateStatus('批量测试完成，可执行步骤 7 导出报告');
-            notify(this, 'TestCompleted');
-        end
-
-        % ============================================================
-        %   核心：单条样本处理
-        % ============================================================
-        function [sample, detection] = processOne(this, cellInfo)
-            con = cellInfo.constellation;
-            switch lower(con)
-                case 'starlink'
-                    satObj = this.StarlinkSats{cellInfo.satIdx};
-                    utObj = this.StarlinkUTs{cellInfo.satIdx};
-                    compObj = this.StarlinkCompanions{cellInfo.satIdx};
-                case 'oneweb'
-                    satObj = this.OnewebSats{cellInfo.satIdx};
-                    utObj = this.OnewebUTs{cellInfo.satIdx};
-                    compObj = this.OnewebCompanions{cellInfo.satIdx};
-                otherwise
-                    error('未知星座 %s', con);
-            end
-
-            % 在场景时间窗口内随机采样一个 simTime
-            duration_sec = seconds(this.Scenario.StopTime - this.Scenario.StartTime);
-            offsetSec = rand() * max(0.0, duration_sec);
-            simTime = this.Scenario.StartTime + seconds(offsetSec);
-
-            [commSatPos, ~] = states(satObj, simTime, 'CoordinateFrame', 'ecef');
-            [companionPos, companionVel] = states(compObj, simTime, 'CoordinateFrame', 'ecef');
-            commSatPos = commSatPos(:);
-            companionPos = companionPos(:);
-            companionVel = companionVel(:);
-
-            terminalPos = [utObj.Latitude, utObj.Longitude, 0];
-
-            sample = twin.app.Session2TestFlowPanel.generateSample( ...
-                con, terminalPos, commSatPos, companionPos, companionVel, ...
-                simTime, cellInfo.channelIndex, cellInfo.snr_dB, cellInfo.doppler_Hz, ...
-                'Seed', cellInfo.sampleSeed, ...
-                'ExtraNoise_dB', this.ChallengeExtraNoise_dB);
-
-            % 检测（图像已是 640x640，直接送入）
-            [bboxes, scores, labels] = detect(this.DetectionModel, sample.stftImage, ...
-                'Threshold', 0.3);
-            detection = struct('bboxes', bboxes, 'scores', scores, 'labels', labels);
         end
 
         % ============================================================
@@ -739,7 +787,8 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
             for i = 1:n
                 satObj = sats{i};
                 try
-                    cfg = struct('numCandidates', 200);
+                    % 用 terminal.m 默认 80 候选 (已批量化), 显式传以防默认变化
+                    cfg = struct('numCandidates', 80);
                     utPos = twin.signal.terminal(this.Scenario, satObj, constellation, [], cfg);
                 catch ME
                     fprintf('[Session2] %s sat#%d 终端搜索失败 (%s)，回退星下点\n', ...

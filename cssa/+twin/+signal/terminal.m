@@ -19,7 +19,9 @@ function terminalPos = terminal(scenario, commSatellite, constellation, ~, confi
     end
     
     if ~isfield(config, 'numCandidates')
-        config.numCandidates = 500;
+        % 80 个候选 (7 deterministic + 51 nearby Gaussian + 22 random)
+        % 在星下点附近高斯分布命中率极高, 不需要原来的 500.
+        config.numCandidates = 80;
     end
     
     % 获取场景时间范围
@@ -106,32 +108,23 @@ function terminalPos = terminal(scenario, commSatellite, constellation, ~, confi
             end
         end
         
-        % 找最佳仰角位置
-        maxElevThisRound = 0;
-        for i = 1:size(candidates, 1)
-            candidatePos = candidates(i, :);
-            try
-                [elev, ~, ~] = calculateLinkGeometry(candidatePos, satPos);
-                if isfinite(elev) && elev > maxElevThisRound
-                    maxElevThisRound = elev;
-                end
-                if elev > bestElevation && elev >= minElev
-                    bestElevation = elev;
-                    bestTerminal = candidatePos;
-                end
-            catch
-                % 忽略计算失败的候选位置
-                continue;
-            end
+        % --- 批量评估所有候选位置的仰角 (取代 N 次 calculateLinkGeometry 单点调用) ---
+        elevs = elevationBatch(candidates, satPos);
+        elevs(~isfinite(elevs)) = -Inf;
+
+        [maxElevThisRound, idxBest] = max(elevs);
+        if maxElevThisRound > bestElevation && maxElevThisRound >= minElev
+            bestElevation = maxElevThisRound;
+            bestTerminal = candidates(idxBest, :);
         end
-        
+
         % 第一轮调试输出
         if tIdx == 1
             fprintf('[Terminal] 星下点=[%.2f°, %.2f°], 本轮最大仰角=%.1f°, 目标仰角>%d°\n', ...
                 satSubpoint(1), satSubpoint(2), maxElevThisRound, minElev);
         end
-        
-        if bestElevation > 45
+
+        if bestElevation > 60   % 早 break: 已经接近天顶, 无需再换时间点
             break;
         end
     end
@@ -216,6 +209,39 @@ function candidates = generateCandidatesNearSubpoint(constellation, n, satSubpoi
         lons = -180 + 360 * rand(n, 1);
         candidates = [lats, lons, zeros(n, 1)];
     end
+end
+
+function elev_deg = elevationBatch(candidatesLLA, satPos_ECEF)
+    % ELEVATIONBATCH 一次性算 N 个候选位置对单颗卫星的仰角 (deg)
+    %   candidatesLLA   N×3  [lat(deg), lon(deg), alt(m)]
+    %   satPos_ECEF     3×1  ECEF position (m)
+    %
+    %   思路: 用大地法向 (椭球切平面的天顶向量) 与候选->卫星向量的夹角余弦,
+    %   仰角 = asin(dot/|range|).
+
+    if isempty(candidatesLLA)
+        elev_deg = zeros(0, 1);
+        return;
+    end
+
+    % 候选转 ECEF
+    utECEF = lla2ecef(candidatesLLA);  % N×3
+
+    % 候选 -> 卫星 矢量
+    satRow = satPos_ECEF(:).';
+    losVec = satRow - utECEF;          % N×3
+    rangeN = vecnorm(losVec, 2, 2);    % N×1
+
+    % 大地法向 (椭球面切平面的天顶向量), 用纬度/经度直接算
+    lat = candidatesLLA(:, 1) * pi / 180;
+    lon = candidatesLLA(:, 2) * pi / 180;
+    nUp = [cos(lat) .* cos(lon), cos(lat) .* sin(lon), sin(lat)];  % N×3
+
+    % cos(zenith_angle) = dot(nUp, losVec) / range
+    cosZen = sum(nUp .* losVec, 2) ./ max(rangeN, eps);
+
+    % 仰角 = 90 - zenith_angle = asin(cosZen)
+    elev_deg = asin(max(-1, min(1, cosZen))) * 180 / pi;
 end
 
 function minElev = getMinElevation(constellation)
