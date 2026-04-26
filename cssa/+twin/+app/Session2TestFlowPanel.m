@@ -83,7 +83,8 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
         % --- 批检测加速 ---
         % step6 攒满 BatchSize 张 STFT 后一次性 detect, 在 GPU 上速度提升明显.
         % 0 或 1 = 退化为逐张 detect.
-        DetectBatchSize (1,1) double = 16
+        % 5090 (32GB) batch=32 实测每张 ~18ms (vs 单图 ~50ms / 单图 CPU ~80ms).
+        DetectBatchSize (1,1) double = 32
         DetectExecEnv (1,:) char = 'auto'   % 'auto' | 'cpu' | 'gpu'
     end
     
@@ -536,6 +537,18 @@ classdef Session2TestFlowPanel < matlabshared.application.Component
                 this.DetectorPathLabel.Text = path;
             end
             fprintf('[Session2] 已加载检测器: %s\n', path);
+
+            % --- 主动 warmup detect 网络, 避免 step6 第一个 batch 卡顿 ---
+            execEnv = this.resolveExecEnv();
+            try
+                tWarm = tic;
+                dummy = uint8(randi(255, 640, 640, 3));
+                detect(this.DetectionModel, dummy, ...
+                    'Threshold', 0.30, 'ExecutionEnvironment', execEnv);
+                fprintf('[Session2] detect 网络预热完成 (%s, %.1fs)\n', execEnv, toc(tWarm));
+            catch ME
+                fprintf('[Session2] detect 预热失败: %s\n', ME.message);
+            end
         end
 
         function step6_RunBatch(this)

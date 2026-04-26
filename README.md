@@ -343,11 +343,49 @@ step6_RunBatch ── timer (period=50ms) ──┐
 
 | 组件 | 最低 | 推荐 (跑满 6000 cells) |
 | --- | --- | --- |
-| CPU | 4 核 | 8 核 + (会话 2 单 cell 0.4–1.2 s, 整盘 ~1.5 h) |
+| CPU | 4 核 | 8 核 + (会话 2 单 cell 0.4–1.2 s, OFDM 仿真是主要瓶颈) |
 | 内存 | 8 GB | **16 GB** (1.8e6 IQ × double 复数 ≈ 30 MB / cell, 加上 STFT 图 ≈ 2 MB) |
-| GPU | CPU 也能跑 | 任意 NVIDIA + CUDA 可被 Deep Learning Toolbox 用; 实测 RTX 3060 推理快 ~6× |
+| GPU | CPU 也能跑 | NVIDIA + CUDA, **会话 2 step6 自动启用 GPU**, 在 RTX 50 系列上 detect 段加速 ~3.5× |
 | 磁盘 | 5 GB 项目 + 模型 | 20 GB+ 若开 IQ 落盘 |
 | 显示器 | 1366×768 | 1920×1080 起 (GUI 默认 1600×950) |
+
+### 6.5 GPU 配置 (RTX 30/40/50 系列)
+
+会话 2 step6 的 YOLOX `detect()` 会自动选 GPU 路径, 但不同 GPU 架构需要不同处理:
+
+| GPU 架构 | Compute Cap | MATLAB R2025a 行为 |
+| --- | --- | --- |
+| Pascal (10 系列) | 6.1 | 直接可用 |
+| Turing (16/20 系列) | 7.5 | 直接可用 |
+| Ampere (30 系列) | 8.6 | 直接可用 |
+| Ada (40 系列) | 8.9 | 直接可用 |
+| **Hopper / Blackwell (RTX 50 系列, H100, B200)** | **9.0 / 12.0** | **需开启 forward compatibility, 触发一次 PTX JIT 编译 (60+ 秒, 一次性)** |
+
+`twin.launch()` (即 `runTwinPlatform.m`) 启动时会**自动**:
+
+1. 调用 `parallel.gpu.enableCUDAForwardCompatibility(true)` (用户级 preference, 一次设置永久生效)
+2. 触发一次 dummy `gpuArray` 计算, 让 cuBLAS / cuFFT 完成 PTX JIT 编译
+3. step5 加载 detector 时还会主动 warmup `detect()` 网络一次
+
+→ **首次启动会比较慢 (60-90 s, 主要是 PTX JIT)**, 之后所有 MATLAB session 都直接命中缓存。
+
+如要手动覆盖 (例如笔记本核显切到 CPU):
+```matlab
+tf = app.Session2TestFlow;
+tf.DetectExecEnv = 'cpu';   % 'auto' (默认) | 'cpu' | 'gpu'
+tf.DetectBatchSize = 32;    % GPU 显存够时可以再大, 5090 32GB 可以试 64
+```
+
+实测性能 (yoloxs_ep30_bs32 / 96 张 640×640):
+
+| 配置 | 96 张 detect 总耗时 | 每张 | 6000 cells (detect 段) 估算 |
+| --- | ---: | ---: | ---: |
+| CPU 8 核 单图 | 6.5 s | 68 ms | ≈ 7 min |
+| RTX 5090 单图 | 1.9 s | 20 ms | ≈ 2 min |
+| **RTX 5090 batch=16** | **1.85 s** | **19 ms** | **≈ 2 min** |
+| **RTX 5090 batch=32** | **1.87 s** | **19 ms** | **≈ 2 min** |
+
+→ detect 段**在 5090 上比 CPU 快 ~3.5×**。但 step6 整体瓶颈是 `generateSample` (OFDM Tx + p681 LMS 信道, CPU bound, ~0.5 s/cell), 6000 cells 全程估算: CPU ~83 min, GPU ~50 min (整体加速来自 detect 段节省的 5 分钟 + 其他小项)。
 
 ---
 
